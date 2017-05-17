@@ -1,4 +1,4 @@
-import socket, threading, sys
+import socket, threading, sys, time
 import node, packet
 
 
@@ -32,6 +32,7 @@ class Interface(object):
 
 
 	def send(self, pkt, id):
+		time.sleep(0.1)
 		if(id == self.node_1.id):
 			socket_src= self.socket_1
 			socket_dst= self.socket_2
@@ -40,9 +41,8 @@ class Interface(object):
 			socket_dst= self.socket_1
 
 		
-		port_num= socket_dst.getsockname()[1]
-		print('checkleeeeeets', port_num)
 		self.lock.acquire()
+		port_num= socket_dst.getsockname()[1]
 		socket_src.sendto(pkt, ('localhost', port_num))
 		self.lock.release()
 		# while(socket_src.sendto(pkt, ('localhost', socket_dst.getsockname()[1])) == 0):
@@ -55,6 +55,6 @@ class Interface(object):
 			node = self.node_2
 
 		while True:
-			print("Receiving %d" % node.id)
+			# print("Receiving %d" % node.id)
 			pckt, addr = socket.recvfrom(2048)
 			node.recv(self, pckt)

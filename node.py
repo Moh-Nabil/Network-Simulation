@@ -3,14 +3,20 @@ import threading
 import packet, interface
 
 HELLO_MESSAGE_PERIOD= 1
-HELLO_SIZE= 10
+HELLO_SIZE= 17
 EPS= 2
+DEBUG_FLAG= False
+
+def debug(string):
+	if(DEBUG_FLAG):
+		print(string)
 
 class Node(object):
 
 	def __init__(self, id, loc):
 		self.id = id
 		self.loc = loc
+		print(id, ": ", loc[0], loc[1])
 		self.interfaces = []
 		self.RTTs= {}
 		self.bandwidths = {}
@@ -19,7 +25,7 @@ class Node(object):
 
 	def add_interface(self,interface):
 		# initializing interface
-		print("Interface connecting between %d %d" % (interface.node_1.id, interface.node_2.id))
+		debug("Adding interface between %d %d" % (interface.node_1.id, interface.node_2.id))
 		self.interfaces.append(interface)
 		self.bandwidths[interface]= [0, 0, 0]
 		self.time[interface]= [0, 1, 2]
@@ -28,9 +34,16 @@ class Node(object):
 
 	def send_hello_message(self):
 		while(True):
-			print("Sending hello packets from %d" % self.id)
 			pkt = packet.make_pckt(self.id, 0, 0, 0, packet.HELLO_MESSAGE)
-			for interface in self.interfaces:	
+			for interface in self.interfaces:
+				
+				### for debugging
+				to_node= interface.node_1
+				if(self.id == interface.node_1.id):
+					to_node= interface.node_2
+				###
+
+				debug("%d sending HELLO to %d" % (self.id, to_node.id))
 				if(self.RTTs[interface] == None): # save the time of the first send only
 					self.RTTs[interface] = time.time()
 					interface.send(pkt, self.id)
@@ -38,6 +51,15 @@ class Node(object):
 
 
 	def recv_ack_message(self, interface, message):
+		
+		### for debugging
+		from_node= interface.node_1
+		if(self.id == interface.node_1.id):
+			from_node= interface.node_2
+		
+		debug("%d received ACK from %d" % (self.id, from_node.id))
+		###
+
 		t= time.time()
 		bandwidth= HELLO_SIZE/(t - self.RTTs[interface])
 		if(math.fabs(bandwidth - self.bandwidths[interface][2]) > EPS):
@@ -51,24 +73,29 @@ class Node(object):
 
 
 	def send_ack(self, interface):
+		
+		### for debugging
 		node= interface.node_1
 		if(self.id != interface.node_2.id):
 			node= interface.node_2
 
-		print('Hello msg reveived, sending from %d to %d' % (self.id, node.id))
+		debug("%d received HELLO from %d" % (self.id, node.id))
+		###
+
 		pkt = packet.make_pckt(self.id, 0, 0, 0, packet.ACK_MESSAGE)
+		debug("%d sent ACK message to %d" % (self.id, node.id))
 		interface.send(pkt, self.id)
 
 
 	def recv(self, interface, message):
-		print("Received from %d" % (packet.get_src(message)))
 		if packet.isACK(message):
-			print('ACK')
+			debug("%d received ACK from %d" % (self.id, packet.get_src(message)))
 			self.recv_ack_message(interface, message)
 		elif packet.isHello(message):
-			print('HELLO')
+			debug("%d received HELLO from %d" % (self.id, packet.get_src(message)))
 			self.send_ack(interface)
 		else :
+			debug("%d received NORM from %d" % (self.id, packet.get_src(message)))
 			self.recv_message(message)
 
 
@@ -77,33 +104,46 @@ class Node(object):
 		dst_x= packet.get_x(message)
 		dst_y= packet.get_y(message)
 		if (dst == self.id):
-			print("%d received message %s" %(self.id, message))
+			print("%d received NORM from %d message: %s" %(self.id, packet.get_src(message), message))
 		else:
+			print("Routing point: %d from: %d to: %d" %(self.id, packet.get_src(message), dst))
 			interface = self.route(dst, dst_x, dst_y)
-			interface.send(message, self.id)
+			if(interface != None):
+				interface.send(message, self.id)
 
-	def send(self, dst_node_id, dst_x, dst_y, message):
+	def send(self, dst_node_id, dst_x, dst_y):
+		print("%d sending NORM to %d" % (self.id, dst_node_id))
+
 		pkt = packet.make_pckt(self.id, dst_node_id, dst_x, dst_y, packet.NORM_MESSAGE)
 		
 		interface = self.route(dst_node_id, dst_x, dst_y)
-		interface.send(pkt, self.id)
+		if(interface != None):
+			interface.send(pkt, self.id)
 
 	def route(self, dst_id, dst_x, dst_y):#added
 		max_interface = None
-		maxBW = -1
+		maxBW = -(1<<20)
 		for interface in self.interfaces:
-			if(interface.node_1 == dst_id or interface.node_2 == dst_id):
+			if(interface.get_end_point(self).id == dst_id):
 				return interface
 			node = interface.get_end_point(self)
+			debug("%d %s %d %d %d %d %d %d" % (self.id, "inQuad:",self.loc[0],self.loc[1],dst_x,dst_y,node.loc[0],node.loc[1]))
 			if(self.inQuad(self.loc[0],self.loc[1],dst_x,dst_y,node.loc[0],node.loc[1])):
 				futureBW = self.get_bandwidth(self.bandwidths[interface][0],self.bandwidths[interface][1],self.bandwidths[interface][2],time.time(),self.time[interface][2],self.time[interface][1],self.time[interface][0])
+				debug('--------------------- %d' % futureBW)
 				if(futureBW > maxBW):
 					maxBW = futureBW
 					max_interface = interface
+		if(max_interface == None):
+			print("Destination %d unreachable from %d" % (dst_id, self.id))
+			return None
+
+		print("%d chose interface connected to %d" % (self.id, max_interface.get_end_point(self).id))
 		return max_interface
 
 
 	def inQuad(self,src_x,src_y,dst_x,dst_y,point_x,point_y):
+		debug("%d %d %s %d %d %d %d %d %d" % (self.loc[0], self.loc[1], "noooooooooooorm", self.norm_vec(src_x,src_y,dst_x,dst_y), self.norm_vec(src_x,src_y,point_x,point_y), src_x, src_y, point_x, point_y))
 		theta = round(math.degrees(math.acos(self.dot_product(src_x,src_y,dst_x,dst_y,point_x,point_y)/(self.norm_vec(src_x,src_y,dst_x,dst_y)*self.norm_vec(src_x,src_y,point_x,point_y)))),3)
 		if(theta <= 45):
 			return True
@@ -119,8 +159,5 @@ class Node(object):
 		bijp = bij0+((bij0/(t0-t1))+(bij1/(t1-t0)))*(tp-t0)+((bij0/((t0-t1)*(t0-t2)))+(bij1/((t1-t0)*(t1-t2)))+(bij2/((t2-t0)*(t2-t1))))*(tp-t1)*(tp-t0)
 		return bijp
 
-
-
 	def run(self):
 		threading.Thread(target=self.send_hello_message).start()
-
